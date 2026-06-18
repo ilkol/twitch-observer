@@ -21,6 +21,8 @@ type ChatEvent struct {
 }
 
 func main() {
+	channels := []string{"5opka", "buster", "silvername", "bratishkinoff", "stray228"}
+
 	targetChannel := "5opka"
 
 	conn, err := kafka.DialLeader(context.Background(), "tcp", "127.0.0.1:9094", "twitch-chat-events", 0)
@@ -48,9 +50,11 @@ func main() {
 	defer c.Close()
 	_ = c.WriteMessage(websocket.TextMessage, []byte("PASS oauth:justinfan12345\r\n"))
 	_ = c.WriteMessage(websocket.TextMessage, []byte("NICK justinfan12345\r\n"))
-	_ = c.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf("JOIN #%s\r\n", targetChannel)))
 
-	log.Printf("Успешно зашли в чат канала: %s! Сбор логов запущен...\n", targetChannel)
+	for _, ch := range channels {
+		_ = c.WriteMessage(websocket.TextMessage, []byte(fmt.Sprintf("JOIN #%s\r\n", ch)))
+		log.Printf("Успешно зашли в чат канала: %s! Сбор логов запущен...\n", ch)
+	}
 
 	for {
 		_, message, err := c.ReadMessage()
@@ -96,9 +100,9 @@ func main() {
 			)
 			if err != nil {
 				log.Printf("Ошибка пуша в Кафку: %v\n", err)
-			} else {
-				log.Printf("[%s] %s: %s\n", event.Streamer, event.Username, event.Message)
 			}
+		} else {
+			fmt.Println(rawStr)
 		}
 	}
 }
