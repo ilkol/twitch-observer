@@ -21,6 +21,9 @@ services:
       CLUSTER_ID: 'MkU3OEVBNTcwNTJENDM2Qk'
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
 
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
     container_name: twitch-kafka-ui
