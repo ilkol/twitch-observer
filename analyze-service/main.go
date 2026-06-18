@@ -10,6 +10,10 @@ import (
 	"github.com/segmentio/kafka-go"
 )
 
+type UserCrossStats struct {
+	VisitedChannels map[string]time.Time
+}
+
 type ChatEvent struct {
 	Streamer  string    `json:"streamer"`
 	Username  string    `json:"username"`
@@ -17,18 +21,14 @@ type ChatEvent struct {
 	Timestamp time.Time `json:"timestamp"`
 }
 
-type UserStats struct {
-	MsgCount   uint
-	LastActive time.Time
-}
-
 var (
-	userCache  = make(map[string]*UserStats)
-	cacheMutex = sync.Mutex{}
+	globalTracker = make(map[string]*UserCrossStats)
+	trackerMutex  = sync.Mutex{}
 )
 
 const (
-	SuspiciousLimit = 4
+	CrossChannelLimit = 1
+	TimeWindow        = 30 * time.Second
 )
 
 func main() {
@@ -41,7 +41,7 @@ func main() {
 	})
 	defer reader.Close()
 
-	go startCacheCleaner()
+	go startTrackerCleaner()
 
 	for {
 		msg, err := reader.ReadMessage(context.Background())
@@ -57,46 +57,58 @@ func main() {
 			continue
 		}
 
-		checkSuspiciousActivity(event)
+		analyzeCrossChannelActivity(event)
 	}
 }
 
-func checkSuspiciousActivity(event ChatEvent) {
-	cacheMutex.Lock()
-	defer cacheMutex.Unlock()
+func analyzeCrossChannelActivity(event ChatEvent) {
+	trackerMutex.Lock()
+	defer trackerMutex.Unlock()
 
-	stats, exists := userCache[event.Username]
+	stats, exists := globalTracker[event.Username]
 	if !exists {
-		userCache[event.Username] = &UserStats{
-			MsgCount:   1,
-			LastActive: event.Timestamp,
+		globalTracker[event.Username] = &UserCrossStats{
+			VisitedChannels: map[string]time.Time{
+				event.Streamer: event.Timestamp,
+			},
 		}
 		return
 	}
 
-	if time.Since(stats.LastActive) > 10*time.Second {
-		stats.MsgCount = 1
-	} else {
-		stats.MsgCount++
-	}
-	stats.LastActive = event.Timestamp
+	stats.VisitedChannels[event.Streamer] = event.Timestamp
 
-	if stats.MsgCount > SuspiciousLimit {
-		log.Printf("⚠️ АНОМАЛИЯ: Пользователь [%s] флудит в чате %s! (%d сообщений за <10 сек). Возможный бот накрутки актива!\n",
-			event.Username, event.Streamer, stats.MsgCount)
+	activeNowCount := 0
+	var activeChannelsList []string
+
+	for ch, lastTime := range stats.VisitedChannels {
+		if time.Since(lastTime) <= TimeWindow {
+			activeNowCount++
+			activeChannelsList = append(activeChannelsList, ch)
+		}
+	}
+
+	if activeNowCount > CrossChannelLimit {
+		log.Printf("🚨 СЕТЕВАЯ АНОМАЛИЯ: Юзер [%s] ОДНОВРЕМЕННО пишет в чатах: %v за последние 30 сек! Подозрение на ботнет!\n",
+			event.Username, activeChannelsList)
 	}
 }
 
-func startCacheCleaner() {
+func startTrackerCleaner() {
 	for {
-		time.Sleep(30 * time.Second)
-		cacheMutex.Lock()
+		time.Sleep(15 * time.Second)
+		trackerMutex.Lock()
 		now := time.Now()
-		for user, stats := range userCache {
-			if now.Sub(stats.LastActive) > 1*time.Minute {
-				delete(userCache, user)
+
+		for user, stats := range globalTracker {
+			for ch, lastTime := range stats.VisitedChannels {
+				if now.Sub(lastTime) > TimeWindow {
+					delete(stats.VisitedChannels, ch)
+				}
+			}
+			if len(stats.VisitedChannels) == 0 {
+				delete(globalTracker, user)
 			}
 		}
-		cacheMutex.Unlock()
+		trackerMutex.Unlock()
 	}
 }
